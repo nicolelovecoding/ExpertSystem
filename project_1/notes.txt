@@ -1,0 +1,57 @@
+//////////////////////////////////////init the city data///////////////////////////////////////////
+1, init-distance1:  "set the distance of two city which do not reach 
+   each other directly to 99999" 
+2, init-distance2: "when the two cities connect to each other directly, just
+   move one city from the elements2"
+3, init-distance3: "when the two cities is the same one, just move one city
+   from the elements2 and set the distance between two to 0" 
+4, init-distance4: "when there is no city in elements2, just move one city 
+   from elements1 and then refill the cities in elements2"
+5, next-phase: "when there is no city neither in elements1 and elements2, 
+   set halt to the whole init process"
+
+
+//////////////////////////////compute the shortest path between two cities/////////////////////////
+  for (int i = 0; i < 12; i++)
+    for (int j = 0; j < 12; j++)
+      for (int k = 0; k < 12; k++)
+	  if (city[i][j] > (city[i][k] + city[k][j]))
+	  {
+	     city[i][j] = city[i][k] + city[k][j];
+          }
+
+1, inner-loop1: "if city1 and city2 are the same one, just remove one city from the
+   elements2. And reset the elementsK"
+2, inner-loop2: "if the city K which makes the distance from 1 to k plus the 
+   distance from k to 2 shorter than the distance from 1 to 2, then set the distance
+   from 1 to 2 as the distance 1-k + distance k-2."
+3, inner-loop3: "if the city k makes the distance 1-k + distance k-2 > distance 1-2
+   just remove one city from elementsK.
+4, inner-loop4: "if there is no city in elementsK, then remove one city from the elements2 
+   and refill the elementsK"
+5, outer-loop: "if there is no city in elements2, then remove one city from the elements1"
+6, halt: "if there is no city in elements1, then halt"
+
+
+/////////////decide which truck to deliver the packages//////////////
+1, pack-stage: "choose the package which arrives the first and then assign it to 
+   an available truck."
+2, deliver-stage: "if there is no truck available, end the dispatch stage and start delivering."
+3, return-stage: "if all the trucks have been dispatched, end the dispatch-stage and start
+   to return."
+4, return-stage: "After all the trucks have been dispatched, start returning."
+5, back-to-idle: "When the car returns back, just set it to idle."
+6, set_end: "record the time that the last truck return."
+7, end_wait: "compute the time the truck need to wait until the last truck is back."
+
+////////////////////////////Truck Report//////////////////////////////////
+(Total_wait_time ?truck_num ?time) ;record the time the truck spends on waiting
+(End ?time) ;record the time when all the delivering have been finished
+(Occupied_by_package ?truck_num ?time) ;record the time during which the truck is 
+                                        occupied by packages
+
+/////////////////////////////Package Report//////////////////////////////
+(Package_wait ?P_num ?time) ;record the time the package await for delivery.
+(Package_pick_up ?P_num ?arrive_time) ;record the package pick up time. 
+(Package_delivery ?P_num ?time) ;record the package delivery time.
+

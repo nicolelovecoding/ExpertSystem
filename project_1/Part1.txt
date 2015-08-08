@@ -1,0 +1,214 @@
+(defrule init     ;find the two cities which do not connect to each other directly and set the distance between the two to 99999
+  (declare (salience 2))
+  (city $? ?city1 $? ?)
+  (city $? ?city2 $? ?)
+  (not (city ?city1 ?city2 ?)) ;if city1 and city2 do not have a path connect directly
+  (test (neq ?city1 ?city2))  ;make sure that city1 and city2 is not the same one
+ =>
+  (assert (city ?city1 ?city2 99999)) ) ;initiate the distance of city1 and city2 as infinit big 999999
+
+(defrule init2    ;set the distance of one city to themselves to 0
+  (declare (salience 2))
+  (city $? ?city1 $? ?)
+  (city $? ?city2 $? ?)
+  (not (city ?city1 ?city2 ?))
+  (test (eq ?city1 ?city2))  ;if city1 and city2 is the same one
+ =>
+  (assert (city ?city1 ?city2 0)) ) ;set the distance of one city to itself to 0
+
+(defrule floyd  ;use the floyd algorithm to compute the shortest distance between any two different cities
+  (declare (salience 1))
+  ?update <- (city ?city1 ?city2 ?distance)
+  (city ?city1 ?city_k ?dis_k)
+   (city ?city2 ?city_k ?dis_m)
+   (test (< (+ ?dis_k ?dis_m) ?distance)) ;if the distance from city1 to city_k plus distance from city_k to city2 is shorter 
+                                          ;than the distance from city1 to city2, then set the smaller one as its distance
+ =>
+   (retract ?update)
+   (assert (city ?city1 ?city2 (+ ?dis_m ?dis_k))) ) ;set the distance from city1 to city2 as the distance from city1 to city_k 
+                                                     ;plus from city_k to city2
+
+ (defrule init-truck       ;init some data for trucks
+  (Truck ?truck_num ?current ? ?Space ?current_time idle none) 
+  (test (= ?current_time 0))
+  (not (city ? ? 99999))   ;if the floyd algorithm has been accomplished
+ =>
+  (assert (Total_wait_time ?truck_num 0)) ;set the total wait time to 0
+  (assert (Idle ?truck_num 0))  ;set the idle time to 0
+  (assert (Occupied_by_package ?truck_num 0)) ;set the time the truck was occupied by package to 0
+  (assert (Delivered_package ?truck_num 0)) ) ;set the number of packages the truck delivered to 0
+
+ (defrule pack-stage     ;set the package which arrives first and then choose a truck to deliver it
+  ?d <- (Package ?n ?destination_city ?delivery_city ?Size ?arrive_time ?expected_time)  ;find the package which arrives earliest
+  (not (Package ? ? ? ? ?time&:(< ?time ?arrive_time) ?))
+  ?t <- (Truck ?truck_num ?current ? ?Space&:(>= ?Space ?Size) ?current_time&:(>= ?arrive_time ?current_time) idle none)  ;find the truck which has enough space to hold the package
+  (city Orlando ?destination_city ?distance) 
+  ?update <- (Total_wait_time ?truck_num ?wait_time) 
+  ?del <- (Idle ?truck_num ?)
+  ?Delivery <- (Delivered_package ?truck_num ?package_number)
+ =>
+  (retract ?d ?t ?del ?update ?Delivery)
+  (assert (Deliver_inform ?n ?delivery_city ?arrive_time))
+  (assert (Truck ?truck_num ?current ?destination_city (- ?Space ?Size) ?arrive_time dispatched ?n))
+  (assert (Time ?arrive_time ?n ?truck_num dispatched ?destination_city (+ ?arrive_time ?distance))) 
+  (assert (Dispatched ?n (+ ?arrive_time ?distance)))
+  (assert (Space ?truck_num ?Space))  ;record the space of this truck
+  (assert (Total_wait_time ?truck_num (+ ?wait_time (- ?arrive_time ?current_time)))) 
+  (assert (Delivered_package ?truck_num (+ ?package_number 1))) 
+  (assert (Expected_delivery ?n ?expected_time)) ) ;record the expected delivery time of the package
+
+(defrule pack-stage2   ;this is the case when the truck have delivered other packages and back to idle and then plan to deliver package again
+  ?d <- (Package ?n ?destination_city ?delivery_city ?Size ?arrive_time ?expected_time) ;package
+  (not (Package ? ? ? ? ?time&:(< ?time ?arrive_time) ?))
+  ?t <- (Truck ?truck_num Orlando ? ?Space&:(>= ?Space ?Size) ?current_time&:(< ?arrive_time ?current_time) idle none) ;truck
+  (city Orlando ?destination_city ?distance)
+  ?del <- (Idle ?truck_num ?)
+  ?Delivery <- (Delivered_package ?truck_num ?package_number)
+ =>
+  (retract ?d ?t ?del ?Delivery)
+  (assert (Deliver_inform ?n ?delivery_city ?arrive_time))
+  (assert (Truck ?truck_num Orlando ?destination_city (- ?Space ?Size) ?current_time dispatched ?n))
+  (assert (Time ?current_time ?n ?truck_num dispatched ?destination_city (+ ?current_time ?distance))) 
+  (assert (Dispatched ?n (+ ?current_time ?distance))) 
+  (assert (Delivered_package ?truck_num (+ ?package_number 1))) 
+  (assert (Expected_delivery ?n ?expected_time)) )
+
+(defrule deliver-stage   ;when all the packages have been delivered or all the trucks have been dispatched, we start to deliver package
+   (or (not (Package $?)) (not (Truck $? idle ?)))  ;make sure that all the trucks have been dispatched or all the packages have been assigned to a truck
+   ?pop <- (Dispatched ?P_num ?arrive_time)
+   (not (Dispatched ? ?time&:(< ?time ?arrive_time)))
+   (Time ? ?P_num ?T_num dispatched ?arrive_location ?arrive_time)
+   (Deliver_inform ?P_num ?delivery_city ?P_arrive)
+   (city ?arrive_location ?delivery_city ?distance)
+   ?del <- (Truck ?T_num ? ? ?space $?)
+   ?update <- (Occupied_by_package ?T_num ?O_time)
+ =>
+   (retract ?del ?pop ?update)
+   (assert (Time ?arrive_time ?P_num ?T_num delivering ?delivery_city (+ ?arrive_time ?distance))) 
+   (assert (Truck ?T_num ?arrive_location ?delivery_city ?space ?arrive_time delivering ?P_num))
+   (assert (Delivering ?P_num (+ ?arrive_time ?distance))) 
+   (assert (Occupied_by_package ?T_num (+ ?O_time ?distance)))
+   (assert (Package_wait ?P_num (- ?arrive_time ?P_arrive))) 
+   (assert (Package_pick_up ?P_num ?arrive_time)) ;record ther time when the truck pick up the package
+   (assert (Package_delivery ?P_num (+ ?arrive_time ?distance))) ) ;record the time when the package is delivered
+
+(defrule return-stage ;After all the trucks have been dispatched, start returning.
+    (not (Truck $? dispatched ?))  ;make sure that all the trucks have departed for the delivery place
+    ?pop <- (Delivering ?P_num ?arrive_time)
+    (not (Delivering ? ?time&:(< ?time ?arrive_time)))
+    (Time ? ?P_num ?T_num delivering ?arrive_location ?arrive_time)
+    (Deliver_inform ?P_num ?delivery_city ?)
+    (city ?delivery_city Orlando ?distance)
+    ?del <- (Truck ?T_num ? ? ?space $?)
+  =>
+    (retract ?pop ?del)
+    (assert (Time ?arrive_time ?P_num ?T_num return Orlando (+ ?arrive_time ?distance))) 
+    (assert (Truck ?T_num ?delivery_city Orlando ?space ?arrive_time return ?P_num))
+    (assert (Return ?T_num (+ ?arrive_time ?distance))) )
+
+(defrule back-to-idle ;When the car returns back, just set it to idle
+    ?pop <- (Return ?truck_num ?arrive_time)
+    (not (Return ? ?time&:(< ?time ?arrive_time)))
+    (Space ?truck_num ?Space)
+    ?t <- (Truck ?truck_num ?current ? ? ? return ?P_num)
+  =>
+    (retract ?pop ?t)
+    (assert (Truck ?truck_num Orlando none ?Space ?arrive_time idle none))
+    (assert (Idle ?truck_num ?arrive_time)) )
+
+(defrule set_end ;record the time that the last truck return
+    (not (Truck $? return ?))
+    (not (Truck $? dispatched ?))
+    (not (Truck $? delivering ?))   ;when there is not truck being dispatched or returning or delivering, that means all the packages have been delivered
+    (Idle ?truck_num ?end_time)
+    (not (Idle ? ?time&:(> ?time ?end_time))) 
+  =>
+    (assert (End ?end_time)) )  ;record the time when the last truck came back to Orlando
+
+(defrule end_wait ;compute the time the truck need to wait until the last truck is back
+    (End ?end_time)
+    ?remove <- (Idle ?n ?e_time&:(< ?e_time ?end_time))
+    ?del <- (Total_wait_time ?n ?wait_time)
+  =>
+    (retract ?del ?remove)
+    (assert (Total_wait_time ?n (+ ?wait_time (- ?end_time ?e_time)))) ) ;we should add the time time when the trucks have finished their delivery and waiting for the last truck back to Orlando
+
+(defrule generate_truck_report1 ;printout the truck titles and start the truck report generation
+    (End ?)
+  =>
+    (assert (truck_report_initiated))
+    (format t "%10s %-10s %-10s %-12s %-15s %-10s %-15s %-10s%n" Tuck_number  Wait_time  Busy_time  Percent_busy Transported_package  Occupied  Non_delivery Busy_time) )
+
+(defrule generate_truck_report2 ;generate and print out the truck data
+    (truck_report_initiated)
+    (End ?end_time)
+    ?del <- (Truck ?truck_num $?)
+    (not (Truck ?n&:(< ?n ?truck_num) $?))
+    (Total_wait_time ?truck_num ?wait_time)
+    ?del2 <- (Delivered_package ?truck_num ?package_number)
+    ?del3 <- (Occupied_by_package ?truck_num ?O_time)
+  =>
+    (retract ?del ?del2 ?del3)
+    (format t "%-10d  %-9d  %-10d %-12.2f %-19d %-10.2f %-15d %-10.2f%n" ?truck_num  ?wait_time (- ?end_time ?wait_time) (/ (- ?end_time ?wait_time) ?end_time)
+    ?package_number (/ ?O_time (- ?end_time ?wait_time)) (- (- ?end_time ?wait_time) ?O_time) (/ ?O_time (- ?end_time ?wait_time))) )
+
+(defrule generate_package_report1 ;print out the package titles, and start the package report generation
+    (End ?)
+  =>
+    (format t "%13s %10s %10s %12s %15s %10s%n" Package_number  Wait_time  Pick_time  Delivery_time  On_time_or_late  Late_time)
+    (assert (package_report_initiated))
+    (assert (P_total_wait 0))
+    (assert (Delivered_on_time 0))
+    (assert (Delivered_late 0))
+    (assert (Num_of_packages 0))
+    (assert (Total_late 0)) ) 
+
+(defrule generate_package_report2 ;generate the package data when the packages delivered on time
+    (package_report_initiated)
+    ?del1 <- (Expected_delivery ?package_num ?expected_time)
+    (not (Expected_delivery ?n&:(< ?n ?package_num) ?))
+    ?del2 <- (Package_wait ?package_num ?W_time)
+    ?del3 <- (Package_pick_up ?package_num ?P_time)
+    ?del4 <- (Package_delivery ?package_num ?D_time)
+    (test (<= ?D_time ?expected_time))
+    ?del5 <- (P_total_wait ?Total_wait)
+    ?del6 <- (Delivered_on_time ?On_time)
+    ?del7 <- (Num_of_packages ?number_of_packages)
+  =>
+    (retract ?del1 ?del2 ?del3 ?del4 ?del5 ?del6  ?del7)
+    (format t "%-15d %-10d %-9d %-13d %-16s %-10d%n"?package_num ?W_time ?P_time ?D_time On_time! 0)
+    (assert (P_total_wait (+ ?W_time ?Total_wait))) 
+    (assert (Delivered_on_time (+ ?On_time 1))) 
+    (assert (Num_of_packages (+ 1 ?number_of_packages))) )
+
+(defrule generate_package_report3 ;generate the package data when the packages delivered late
+    (package_report_initiated)
+    ?del1 <- (Expected_delivery ?package_num ?expected_time)
+    (not (Expected_delivery ?n&:(< ?n ?package_num) ?))
+    ?del2 <- (Package_wait ?package_num ?W_time)
+    ?del3 <- (Package_pick_up ?package_num ?P_time)
+    ?del4 <- (Package_delivery ?package_num ?D_time)
+    (test (> ?D_time ?expected_time))
+    ?del5 <- (P_total_wait ?Total_wait)
+    ?del6 <- (Delivered_late ?Late)
+    ?del7 <- (Num_of_packages ?number_of_packages)
+    ?del8 <- (Total_late ?total_late_time)
+  =>
+    (retract ?del1 ?del2 ?del3 ?del4 ?del5 ?del6 ?del7 ?del8) 
+    (format t "%-15d %-10d %-9d %-13d %-16s %-10d%n"?package_num ?W_time ?P_time ?D_time Late! (- ?D_time ?expected_time))
+    (assert (P_total_wait (+ ?W_time ?Total_wait))) 
+    (assert (Delivered_late (+ ?Late 1)))
+    (assert (Num_of_packages (+ 1 ?number_of_packages)))
+    (assert (Total_late (+ ?total_late_time (- ?D_time ?expected_time)))) )
+
+(defrule generate_package_average; generate the average package data and print out
+    (not (Expected_delivery $?))
+    ?del <- (P_total_wait ?total_wait)
+    ?del2 <- (Delivered_on_time ?num_on_time)
+    ?del3 <- (Delivered_late ?num_late)
+    ?del4 <- (Num_of_packages ?num_pakage)
+    ?del5 <- (Total_late ?total_late_time)
+  =>
+    (retract ?del ?del2 ?del3 ?del4 ?del5)
+    (format t "%17s %20s %20s %16s %20s%n" Average_wait_time Num_of_package_on_time Num_of_package_late Lateness_for_late_package Lateness_for_all)
+    (format t "%-17.2f %-23d %-19d %-29.2f %-20.2f%n" (/ ?total_wait ?num_pakage) ?num_on_time ?num_late (/ ?total_late_time ?num_late) (/ ?total_late_time ?num_pakage)) )
